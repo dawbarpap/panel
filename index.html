@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel operacyjny // Monitoring</title>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#0d131c; --line:#1c2733; --line-soft:#141c26;
+    --ink:#e6edf3; --ink-dim:#7d8da1; --ink-mute:#4a5a6e;
+    --up:#3fb950; --down:#f85149; --flat:#7d8da1;
+    --g-media:#3fb950; --g-scale:#58a6ff; --g-biz:#e3a008;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%; background:#05070a; font-family:"SF Mono","JetBrains Mono","Fira Code",ui-monospace,Menlo,Consolas,monospace;}
+  body{height:100vh; padding:clamp(8px,1vw,18px); display:flex;}
+  .wrap{width:100%; height:100%; display:flex; flex-direction:column;}
+  .panel{position:relative; flex:1; min-height:0; display:flex; flex-direction:column;
+    background:var(--bg); border:1px solid var(--line); border-radius:4px; overflow:hidden;}
+  .scan{position:absolute; inset:0; pointer-events:none; z-index:5;
+    background:repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,0.10) 3px, rgba(0,0,0,0) 4px);
+    mix-blend-mode:multiply; transition:opacity .2s;}
+  .scan.off{opacity:0;}
+  .head{position:relative; z-index:2; flex:none; display:flex; align-items:center; justify-content:space-between;
+    padding:clamp(9px,1.1vh,16px) clamp(12px,1.4vw,24px); border-bottom:1px solid var(--line); background:var(--panel);}
+  .head-l{display:flex; align-items:center; gap:10px;}
+  .led{width:7px; height:7px; border-radius:50%; background:var(--up); box-shadow:0 0 6px var(--up); animation:pulse 2.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+  .head-title{font-size:clamp(12px,0.95vw,17px); color:var(--ink-dim); letter-spacing:0.14em;}
+  .head-r{display:flex; align-items:center; gap:14px;}
+  .head-meta{font-size:clamp(11px,0.8vw,14px); color:var(--ink-mute); letter-spacing:0.1em;}
+  .scan-toggle{font-size:clamp(10px,0.72vw,13px); color:var(--ink-mute); letter-spacing:0.08em; cursor:pointer; border:1px solid var(--line);
+    padding:3px 8px; border-radius:3px; user-select:none; background:none;}
+  .scan-toggle:hover{color:var(--ink-dim); border-color:var(--ink-mute);}
+  .grid{position:relative; z-index:2; flex:1; min-height:0; display:grid;
+    grid-template-columns:repeat(4,1fr); grid-auto-rows:1fr; gap:1px; background:var(--line);}
+  .cell{position:relative; background:var(--bg); padding:clamp(12px,1.6vh,26px) clamp(14px,1.2vw,28px);
+    display:flex; flex-direction:column; justify-content:space-between; min-height:0; overflow:hidden;}
+  .cell-bar{position:absolute; left:0; top:0; bottom:0; width:3px;}
+  .cell-top{display:flex; justify-content:space-between; align-items:baseline;}
+  .cell-code{font-size:clamp(10px,0.7vw,13px); color:var(--ink-mute); letter-spacing:0.12em;}
+  .cell-chg{font-size:clamp(10px,0.72vw,14px); white-space:nowrap;}
+  .cell-name{font-size:clamp(10px,0.78vw,15px); color:var(--ink-dim); letter-spacing:0.04em;
+    margin:clamp(6px,1vh,14px) 0 clamp(4px,0.8vh,12px); line-height:1.3;}
+  .cell-bottom{display:flex; justify-content:space-between; align-items:flex-end; gap:8px;}
+  .cell-val{font-size:clamp(22px,2.6vw,52px); color:var(--ink); font-variant-numeric:tabular-nums;
+    letter-spacing:0.01em; white-space:nowrap; line-height:1;}
+  .cell-spark{opacity:.8; flex-shrink:0; width:clamp(72px,7vw,150px); height:clamp(22px,2.2vw,44px);}
+  .legend{position:relative; z-index:2; flex:none; display:flex; gap:clamp(14px,1.6vw,32px); flex-wrap:wrap;
+    padding:clamp(8px,1vh,14px) clamp(12px,1.4vw,24px); border-top:1px solid var(--line); background:var(--panel);}
+  .legend span{font-size:clamp(10px,0.72vw,13px); color:var(--ink-mute); letter-spacing:0.1em;}
+  .foot{flex:none; margin-top:6px; font-size:clamp(10px,0.7vw,12px); color:#2f3a48; letter-spacing:0.08em; text-align:right;}
+  .foot.err{color:var(--down);}
+  @media (max-width:1000px){ .grid{grid-template-columns:repeat(3,1fr);} }
+  @media (max-width:720px){ .grid{grid-template-columns:repeat(2,1fr);} body{height:auto; min-height:100vh;} .grid{grid-auto-rows:minmax(90px,1fr);} }
+  @media (max-width:440px){ .grid{grid-template-columns:1fr;} .head-title{font-size:11px;} }
+  @media (prefers-reduced-motion: reduce){ .led{animation:none;} }
+
+  .cell{cursor:pointer; transition:background .15s;}
+  .cell:hover{background:#0c121b;}
+  .cell:focus-visible{outline:1px solid var(--ink-dim); outline-offset:-2px;}
+
+  .modal{position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center;
+    background:rgba(3,5,8,0.72); backdrop-filter:blur(2px); opacity:0; pointer-events:none; transition:opacity .18s;}
+  .modal.open{opacity:1; pointer-events:auto;}
+  .modal-box{width:min(72vw,880px); max-height:80vh; background:var(--panel); border:1px solid var(--line);
+    border-radius:6px; box-shadow:0 24px 80px rgba(0,0,0,0.6); overflow:hidden; transform:translateY(8px) scale(0.98);
+    transition:transform .2s;}
+  .modal.open .modal-box{transform:translateY(0) scale(1);}
+  .modal-head{display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
+    padding:16px 20px; border-bottom:1px solid var(--line);}
+  .modal-code{font-size:11px; color:var(--ink-mute); letter-spacing:0.14em;}
+  .modal-name{font-size:16px; color:var(--ink); letter-spacing:0.06em; margin-top:6px;}
+  .modal-val{font-size:26px; color:var(--ink); font-variant-numeric:tabular-nums; margin-top:8px; letter-spacing:0.01em;}
+  .modal-chg{font-size:12px; margin-left:10px;}
+  .modal-close{flex:none; width:30px; height:30px; border:1px solid var(--line); background:none; color:var(--ink-dim);
+    border-radius:4px; cursor:pointer; font-size:15px; line-height:1;}
+  .modal-close:hover{color:var(--ink); border-color:var(--ink-mute);}
+  .modal-body{padding:18px 20px 22px; height:min(46vh,380px); position:relative;}
+  @media (max-width:720px){ .modal-box{width:92vw;} .modal-body{height:44vh;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="panel">
+    <div class="scan" id="scan"></div>
+    <div class="head">
+      <div class="head-l">
+        <span class="led"></span>
+        <span class="head-title">MONITORING // PANEL OPERACYJNY</span>
+      </div>
+      <div class="head-r">
+        <span class="head-meta" id="meta">SYS.ONLINE · REFRESH 7D</span>
+        <button class="scan-toggle" id="scanToggle">SCANLINE: ON</button>
+      </div>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="legend">
+      <span><span style="color:var(--g-media)">●</span> ŹRÓDŁA MEDIÓW</span>
+      <span><span style="color:var(--g-scale)">●</span> SKALA / BAZA</span>
+      <span><span style="color:var(--g-biz)">●</span> BIZNES / LUDZIE</span>
+    </div>
+  </div>
+  <div class="foot" id="foot">DANE DEMO · ARKUSZ NIEPODŁĄCZONY</div>
+</div>
+
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalName">
+  <div class="modal-box">
+    <div class="modal-head">
+      <div>
+        <div class="modal-code" id="modalCode">M-01</div>
+        <div class="modal-name" id="modalName">WSKAŹNIK</div>
+        <div><span class="modal-val" id="modalVal">0</span><span class="modal-chg" id="modalChg"></span></div>
+      </div>
+      <button class="modal-close" id="modalClose" aria-label="Zamknij">✕</button>
+    </div>
+    <div class="modal-body">
+      <canvas id="modalChart" aria-label="Wykres wybranego wskaźnika w czasie"></canvas>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const CONFIG = {
+  SHEET_CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQz5Bj1zdME6humP46d2Svo-MeoAcTv7UJwgGTIn3ijdncne87zB6NZMaB5fjZ67Q/pub?gid=1662103533&single=true&output=csv",
+  META_LABELS: [
+    { code:'M-01', name:'LICZBA ŹRÓDEŁ ŁĄCZNIE', grp:'scale' },
+    { code:'M-02', name:'PRASA',                 grp:'media' },
+    { code:'M-03', name:'RADIO',                 grp:'media' },
+    { code:'M-04', name:'TELEWIZJA',             grp:'media' },
+    { code:'M-05', name:'WWW',                   grp:'media' },
+    { code:'M-06', name:'SOCIAL MEDIA',          grp:'media' },
+    { code:'M-07', name:'PŁATNI KLIENCI',        grp:'biz'   },
+    { code:'M-08', name:'REKORDY W BAZIE',       grp:'scale', unit:'MLN' },
+    { code:'M-09', name:'LICZBA ZATRUDNIONYCH',  grp:'biz'   },
+    { code:'M-10', name:'PROJEKTY W IT',         grp:'biz'   },
+    { code:'M-11', name:'UMOWY Z WYDAWCAMI',     grp:'biz'   },
+    { code:'M-12', name:'LICZBA REKLAMACJI',     grp:'biz', isPct:true }
+  ]
+};
+
+const DEMO = [
+  [110300,19100,7900,10600,70100,21200,1885,5.42,348,23,448,46],
+  [113100,18950,8100,10800,70800,21900,1890,5.47,347,24,451,44],
+  [116400,18800,8300,10950,71200,22400,1888,5.51,346,24,453,42],
+  [115200,18600,8500,11100,71600,23100,1892,5.55,345,25,456,40],
+  [118600,18700,8700,11200,71900,23600,1889,5.58,344,25,458,39],
+  [120900,18540,8900,11300,72000,24000,1890,5.61,344,26,459,38],
+  [122404,18705,8300,11090,71905,23805,1890,5.55,344,25,456,39],
+  [124580,18420,9215,11430,72340,24605,1890,5.678,342,27,463,34]
+];
+
+const GC = { media:'var(--g-media)', scale:'var(--g-scale)', biz:'var(--g-biz)' };
+const COL = { up:'#3fb950', down:'#f85149', flat:'#7d8da1' };
+const SYM = { up:'▲', down:'▼', flat:'■' };
+const PL = new Intl.NumberFormat('pl-PL');
+const PL3 = new Intl.NumberFormat('pl-PL',{minimumFractionDigits:3,maximumFractionDigits:3});
+
+function fmtVal(v, m){
+  if(m.unit==='MLN') return PL3.format(v)+' MLN';
+  return PL.format(Math.round(v));
+}
+function fmtChg(cur, prev, m){
+  if(m.isPct){
+    const p = prev ? ((cur-prev)/prev)*100 : 0;
+    return Math.abs(p).toFixed(1)+'%';
+  }
+  const d = cur-prev;
+  if(m.unit==='MLN') return (d>=0?'+':'−')+PL3.format(Math.abs(d));
+  if(Math.round(d)===0) return '0';
+  return (d>=0?'+':'−')+PL.format(Math.abs(Math.round(d)));
+}
+function dir(cur, prev){
+  const d = cur-prev;
+  if(Math.abs(d) < 1e-9) return 'flat';
+  return d>0 ? 'up' : 'down';
+}
+function spark(series, c){
+  const w=72,h=22,min=Math.min(...series),max=Math.max(...series),r=(max-min)||1;
+  const pts=series.map((v,i)=>`${(i/(series.length-1))*w},${(h-((v-min)/r)*h).toFixed(1)}`).join(' ');
+  return `<svg class="cell-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${c}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+let CURRENT = null;
+
+function render(matrix){
+  CURRENT = matrix;
+  const cols = CONFIG.META_LABELS.length;
+  const last = matrix[matrix.length-1];
+  const prev = matrix[matrix.length-2] || last;
+  const grid = document.getElementById('grid');
+  grid.innerHTML = CONFIG.META_LABELS.map((m, j)=>{
+    const cur = last[j], pv = prev[j];
+    const d = m.isPct ? dir(pv, cur) : dir(cur, pv);
+    const series = matrix.map(r=>r[j]);
+    const c = COL[d]==='#7d8da1' ? '#3fb950' : COL[d];
+    return `<div class="cell" data-idx="${j}" role="button" tabindex="0" aria-label="${m.name}, pokaż wykres">
+      <span class="cell-bar" style="background:${GC[m.grp]}"></span>
+      <div class="cell-top">
+        <span class="cell-code">${m.code}</span>
+        <span class="cell-chg" style="color:${COL[d]}">${SYM[d]} ${fmtChg(cur, pv, m)}</span>
+      </div>
+      <div class="cell-name">${m.name}</div>
+      <div class="cell-bottom">
+        <span class="cell-val">${fmtVal(cur, m)}</span>
+        ${spark(series, c)}
+      </div>
+    </div>`;
+  }).join('');
+  grid.querySelectorAll('.cell').forEach(cell=>{
+    const j = +cell.dataset.idx;
+    cell.addEventListener('click', ()=>openModal(j));
+    cell.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openModal(j); } });
+  });
+  animateNums(matrix);
+}
+
+function animateNums(matrix){
+  if(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const last = matrix[matrix.length-1];
+  document.querySelectorAll('.cell-val').forEach((el, j)=>{
+    const m = CONFIG.META_LABELS[j];
+    const target = last[j], dur=850, t0=performance.now();
+    function step(now){
+      const p = Math.min((now-t0)/dur, 1), e = 1-Math.pow(1-p,3);
+      el.textContent = fmtVal(target*e, m);
+      if(p<1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+function parseCSV(text){
+  const rows = text.trim().split(/\r?\n/).map(r=>{
+    const out=[]; let cur='', q=false;
+    for(let i=0;i<r.length;i++){
+      const ch=r[i];
+      if(ch==='"'){ q=!q; }
+      else if(ch===',' && !q){ out.push(cur); cur=''; }
+      else cur+=ch;
+    }
+    out.push(cur); return out;
+  });
+  const body = rows.slice(1);
+  const matrix = body.map(r=>r.slice(1, 1+CONFIG.META_LABELS.length).map(v=>{
+    const n = parseFloat(String(v).replace(/\s/g,'').replace(',','.'));
+    return isNaN(n) ? 0 : n;
+  })).filter(r=>r.length===CONFIG.META_LABELS.length);
+  return matrix;
+}
+
+async function boot(){
+  const foot = document.getElementById('foot');
+  const meta = document.getElementById('meta');
+  if(!CONFIG.SHEET_CSV_URL){
+    render(DEMO);
+    foot.textContent = 'DANE DEMO · WKLEJ LINK CSV W CONFIG.SHEET_CSV_URL';
+    return;
+  }
+  try{
+    const res = await fetch(CONFIG.SHEET_CSV_URL, {cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const matrix = parseCSV(await res.text());
+    if(!matrix.length) throw new Error('brak wierszy');
+    render(matrix);
+    const now = new Date();
+    const stamp = now.toISOString().slice(0,16).replace('T',' ');
+    meta.textContent = 'SYS.ONLINE · AKT. '+stamp+' UTC';
+    foot.classList.remove('err');
+    foot.textContent = 'ŹRÓDŁO: GOOGLE SHEETS · '+matrix.length+' TYGODNI';
+  }catch(e){
+    render(DEMO);
+    foot.classList.add('err');
+    foot.textContent = 'BŁĄD ODCZYTU ARKUSZA ('+e.message+') · DANE DEMO';
+  }
+}
+
+const scan = document.getElementById('scan');
+const scanBtn = document.getElementById('scanToggle');
+scanBtn.addEventListener('click', ()=>{
+  scan.classList.toggle('off');
+  scanBtn.textContent = scan.classList.contains('off') ? 'SCANLINE: OFF' : 'SCANLINE: ON';
+});
+
+const modal = document.getElementById('modal');
+const modalClose = document.getElementById('modalClose');
+let modalChart = null, lastFocus = null;
+
+function weekLabels(n){
+  return Array.from({length:n}, (_,i)=> i===n-1 ? 'BIEŻĄCY' : 'T-'+(n-1-i));
+}
+
+function openModal(j){
+  if(!CURRENT || !CURRENT.length) return;
+  const m = CONFIG.META_LABELS[j];
+  const series = CURRENT.map(r=>r[j]);
+  const cur = series[series.length-1];
+  const pv = series[series.length-2] ?? cur;
+  const d = m.isPct ? dir(pv, cur) : dir(cur, pv);
+  const c = COL[d]==='#7d8da1' ? '#3fb950' : COL[d];
+
+  document.getElementById('modalCode').textContent = m.code;
+  document.getElementById('modalName').textContent = m.name;
+  document.getElementById('modalVal').textContent = fmtVal(cur, m);
+  const chg = document.getElementById('modalChg');
+  chg.textContent = SYM[d]+' '+fmtChg(cur, pv, m);
+  chg.style.color = COL[d];
+
+  lastFocus = document.activeElement;
+  modal.classList.add('open');
+  modalClose.focus();
+
+  const g = document.getElementById('modalChart').getContext('2d');
+  const grad = g.createLinearGradient(0,0,0,300);
+  grad.addColorStop(0, c+'30'); grad.addColorStop(1, c+'00');
+  if(modalChart) modalChart.destroy();
+  modalChart = new Chart(g, {
+    type:'line',
+    data:{ labels: weekLabels(series.length),
+      datasets:[{ data: series, borderColor:c, backgroundColor:grad, fill:true,
+        borderWidth:2, tension:0.25, pointRadius:5, pointHoverRadius:8,
+        pointBackgroundColor:'#0a0e14', pointBorderColor:c, pointBorderWidth:2 }] },
+    options:{ responsive:true, maintainAspectRatio:false, animation:{duration:400},
+      interaction:{mode:'index', intersect:false},
+      plugins:{ legend:{display:false},
+        tooltip:{ backgroundColor:'#0d131c', titleColor:'#7d8da1', bodyColor:'#e6edf3',
+          borderColor:'#1c2733', borderWidth:1, padding:10, titleFont:{family:'monospace'}, bodyFont:{family:'monospace'},
+          callbacks:{ label:(x)=>'  '+fmtVal(x.parsed.y, m) } } },
+      scales:{
+        x:{ grid:{color:'#141c26'}, ticks:{color:'#4a5a6e', font:{size:11, family:'monospace'}}, border:{color:'#1c2733'} },
+        y:{ grid:{color:'#141c26'}, ticks:{color:'#4a5a6e', font:{size:11, family:'monospace'},
+          callback:(v)=> m.unit==='MLN' ? PL3.format(v) : PL.format(v) }, border:{color:'#1c2733'} } } }
+  });
+}
+
+function closeModal(){
+  modal.classList.remove('open');
+  if(modalChart){ modalChart.destroy(); modalChart=null; }
+  if(lastFocus) lastFocus.focus();
+}
+
+modalClose.addEventListener('click', closeModal);
+modal.addEventListener('click', (e)=>{ if(e.target===modal) closeModal(); });
+document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && modal.classList.contains('open')) closeModal(); });
+
+boot();
+</script>
+</body>
+</html>
